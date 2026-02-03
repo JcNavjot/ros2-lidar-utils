@@ -1,6 +1,5 @@
 import rclpy
 import math
-import time
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from rclpy.qos import QoSProfile, ReliabilityPolicy
@@ -23,14 +22,12 @@ class RobotLaserDataNode(Node):
     def __init__(self):
         super().__init__('laser_inspector_node')
 
-        self.subscription = None
         self.discovery_attempts = 0
         self.max_attempts = 25   # ~5 seconds (25 × 0.2s)
 
         self.get_logger().info("🔍 Searching for LaserScan topic...")
         print("--------------------------------------------------")
 
-        # Timer-based discovery (CRITICAL FIX)
         self.discovery_timer = self.create_timer(0.2, self.try_discover_scan_topic)
 
         self.printed = False
@@ -68,8 +65,7 @@ class RobotLaserDataNode(Node):
         
         self.get_logger().info(f"✅ Subscribing to LaserScan topic: {scan_topic}")
         print("--------------------------------------------------")
-        self.get_logger().info("📡 LaserScan data received")
-        print("--------------------------------------------------")
+        
 
         self.subscription = self.create_subscription(
             LaserScan,
@@ -106,10 +102,10 @@ class RobotLaserDataNode(Node):
         self.scan_angle_increment = msg.angle_increment
         self.scan_range_min = msg.range_min
         self.scan_range_max = msg.range_max
-        self.scan_ranges = [round(value, 3) for value in msg.ranges]
         self.num_ranges = len(msg.ranges)
 
         self.print_laser_info()
+        self.get_logger().info("📡 LaserScan data received")
         print("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
         self.print_direction_indices()
         print(f"\n🤓🎉 {GREEN}Laser inspection complete. Press Ctrl+C to exit.{NC}\n")
@@ -156,8 +152,6 @@ class RobotLaserDataNode(Node):
         print("Direction indices (based on LiDAR scan):")
         print("--------------------------------")
 
-        direction_indices = {}  # create an empty dictionary to hold direction indices
-
         # Define standard direction angles in radians.. the angles are universal by convention and do not depend on the LiDAR configuration
         direction_angles = {
             "front": 0.0,
@@ -190,6 +184,7 @@ def main():
         print(f"\n{RED}Ctrl + C was pressed, Shutting down node, Thank you... {NC}")
     finally:
         node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
