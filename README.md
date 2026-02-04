@@ -1,4 +1,4 @@
-# ROS2 LiDAR Utilities
+## # ROS2 LiDAR Utilities — LaserScan Debugging & Inspection Tools
 
 A collection of ROS2 utilities and debugging tools for working with
 `sensor_msgs/LaserScan` data on real robots and simulations.
