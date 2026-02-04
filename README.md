@@ -53,3 +53,5 @@ This package is typically used during system bring-up or debugging:
 ## Notes
 This package is part of my robotics systems work and is intended as a reusable
 debugging and perception support module.
+
+For design reasoning and development history, see [EVOLUTION.md](EVOLUTION.md).
