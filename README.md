@@ -160,6 +160,8 @@ ros2 topic info /your_scan_topic
 
 Replace `/your_scan_topic` with the actual topic. The type should be `sensor_msgs/msg/LaserScan`.
 
+**If your LiDAR topic has a different name:** Open `lidar_utils/lidar_utils/laser_inspector.py` and update the scan topic name in the node's subscription to match your robot's actual topic. Save the file and rebuild the workspace if needed.
+
 ### Terminal 2 — inspect the scan
 
 First run Laser Inspector to understand the scan's field of view and angular metadata:
