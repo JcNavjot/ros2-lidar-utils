@@ -1,354 +1,274 @@
+
 """
-Sector Debugger Node (YAML-free, real-robot safe)
+Sector Debugger Utility:
+====================
 
-Two debugging approaches using LiDAR (LaserScan):
+A lightweight ROS2 utility for debugging LiDAR obstacle distances
+using sector-based analysis.
 
-Approach 1 (DEBUG_MODE = "sector"):
-    - Compute minimum obstacle distance in predefined angular sectors.
+Main Features
+-------------
+- Automatic LaserScan topic discovery
+- Works on real robots and simulations
+- Dynamic sector-based obstacle inspection
+- Time-throttled terminal output using timer
 
-Approach 2 (DEBUG_MODE = "cardinal"):
-    - Probe distances at specific angles (front, left, right, rear, etc.).
+Design Philosophy
+-----------------
+This utility is intentionally designed to stay:
+- simple
+- reusable
+- universal
+- easy to understand
 
-Design goals:
-- Zero configuration required
-- Robust LaserScan discovery
-- Time-based throttling inside callback
-- Clear, colored logging
+Instead of probing only single rays, the node computes the
+minimum obstacle distance inside angular sectors.
+
+This provides more stable and practical obstacle debugging
+for real robotics systems.
 """
+
 
 import rclpy
-from rclpy.node import Node
-from sensor_msgs.msg import LaserScan
-from rclpy.qos import QoSProfile, ReliabilityPolicy
 import math
-import time
-import threading
-
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy
+from sensor_msgs.msg import LaserScan
 from lidar_utils.laser_utils import get_index_from_angle
 
- 
-    # print(f"⏳ {GREEN}Waiting for input, Please enter what mode and time/duration(seconds) you want to use...{NC}")
-    
-def get_startup_config(timeout=10):
-    DEFAULT_MODE = "cardinal"
-    DEFAULT_PERIOD = 1.0
 
-    user_input = {"received": False}
+# ============================================================
+# Terminal Colors
+# ============================================================
 
-    def timeout_watcher():
-        time.sleep(timeout)
-        if not user_input["received"]:
-            print(f"\n⏱ Timeout reached ({timeout}s). Starting with defaults...\n")
-
-    # Start timeout watcher
-    threading.Thread(target=timeout_watcher, daemon=True).start()
-
-    print("\n🧭 Sector Debugger Setup")
-    print("----------------------------------")
-    print("Mode options available:")
-    print("  - cardinal (default)")
-    print("  - sector")
-    print("")
-    print("----------------------------------")
-    print(f"➡{GREEN} For loading with Default values, either press ENTER, y or wait {timeout}s\n{NC}")
-    print(f"➡{YELLOW} Or press 'n' or 'N' to manually enter Mode and time interval between 2 consective readings(seconds) prompts below (timeout {timeout}s){NC}")
-    print("----------------------------------")
-
-    try:
-        choice = input("Start with default values? [Y/n]: ").strip().lower()
-        user_input["received"] = True
-    except EOFError:
-        return DEFAULT_MODE, DEFAULT_PERIOD
-
-    if choice in ("", "y", "yes"):
-        return DEFAULT_MODE, DEFAULT_PERIOD
-
-    # ---- MODE ----
-    while True:
-        mode = input("Enter mode (cardinal / sector): ").strip().lower()
-        if mode in ("c", "cardinal"):
-            debug_mode = "cardinal"
-            break
-        elif mode in ("s", "sector"):
-            debug_mode = "sector"
-            break
-        else:
-            print("❌ Invalid mode. Please enter 'cardinal' or 'sector'.")
-
-    # ---- PERIOD ----
-    while True:
-        period = input("Enter print period in seconds (> 0): ").strip()
-        try:
-            print_period = float(period)
-            if print_period > 0:
-                break
-            else:
-                raise ValueError
-        except ValueError:
-            print("❌ Invalid value. Enter a positive number.")
-
-    print("\n✅ Starting with:")
-    print(f"   Mode        : {debug_mode.upper()}")
-    print(f"   Print period: {print_period:.2f} s")
-    print("----------------------------------\n")
-
-    return debug_mode, print_period
-
-# --------------------------------------------------
-# ANSI color codes
-# --------------------------------------------------
 RED = "\033[91m"
 GREEN = "\033[1;32m"
 YELLOW = "\033[93m"
 NC = "\033[0m"
 
 
+# ============================================================
+# Preferred LaserScan topic names: You can add any Laserscan topics in this list, it will show the details accordingly.
+# ============================================================
+
 PREFERRED_SCAN_TOPICS = [
     '/scan',
     '/laserscan'
 ]
 
+
 class SectorDebuggerNode(Node):
 
-    def __init__(self, debug_mode="cardinal", print_period=1.0):
+    """
+    Real-time LiDAR sector debugging utility.
+    """
+
+    def __init__(self):
+
         super().__init__('sector_debugger_node')
 
-        # -------------------------------
-        # Sector definitions (radians)
-        # -------------------------------
-        self.sectors = {
-            "Front": (-0.261, 0.261),   # ~ -15° to +15°
-            "Left":  (1.309, 1.833),    # ~ 75° to 105°
-            "Rear" : (3.01, 3.271),     # ~ 173° → 187°
-            "Right": (-1.833, -1.309),  # ~ -105° to -75°
-        }
-
-        self.debug_mode = debug_mode
-        self.print_period = print_period
-        self.last_print_time = 0.0
-        
-
-        self.subscription = None
-
-        self.get_logger().info(
-            f"{GREEN}🧭 Sector Debugger started in "
-            f"{self.debug_mode.upper()} mode{NC}"
-        )
-        self.get_logger().info(f"{GREEN}🕒 Print period: {self.print_period:.2f} s{NC}")
-        self.get_logger().info(f"{GREEN}📐 Active sectors: {list(self.sectors.keys())}{NC}")
-        print("----------------------------------------------------------------")
-        self.get_logger().info("🔍 Searching for LaserScan topic...")
-        print('----------------------------------------------------------------')
-
-        # Discovery state
         self.discovery_attempts = 0
-        self.max_attempts = 25  # ~5 seconds
+        self.max_attempts = 10     # Attempt to find laserscan topic upto 10 times.
 
-        self.discovery_timer = self.create_timer(
-            0.2, self.try_discover_laserscan
-        )
+        self.data_printed = False   # Switch to enable printing the data only one time
+        self.scan_data_ready = False  # Check if laserscan data is ready
 
-    # --------------------------------------------------
-    # LaserScan discovery (robust)
-    # --------------------------------------------------
-    def try_discover_laserscan(self):
-        self.discovery_attempts += 1
+        self.get_logger().info("--------------------------------------------------")
+        self.get_logger().info("🔍 Searching for LaserScan topic...")
+        self.get_logger().info("--------------------------------------------------")
 
-        topics = self.get_topic_names_and_types()
-        laser_topics = [
-            name for name, types in topics
-            if 'sensor_msgs/msg/LaserScan' in types
-        ]
+        # Timer to try discover laserscan topic every 0.2 seconds
+        self.discovery_timer = self.create_timer(0.2,self.try_discover_scan_topic)
 
+        # Set print Interval, you can change the print interval here.
+        # It is the time duration between two consecutive sector readings
+        self.declare_parameter("print_interval", 1.0)
+
+        self.print_interval = (self.get_parameter("print_interval").value)
+        
+        # Timer to print the minimum distance in each sector every 1 second
+        self.print_timer = self.create_timer(self.print_interval,self.print_sector_distances)
+
+    # Topic Discovery
+    def try_discover_scan_topic(self):
+
+        self.discovery_attempts += 1   # Keep incrementing until attempts reach 10.
+
+        topics = self.get_topic_names_and_types()  # Get a list of topic names and types.
+
+        laser_topics = [name for name, types in topics if 'sensor_msgs/msg/LaserScan' in types]
+
+        # If no laser topic is detected
         if not laser_topics:
-            if self.discovery_attempts >= self.max_attempts:
+
+            if self.discovery_attempts >= self.max_attempts:  # if attempts reach 10 and no laserscan topic is found
                 self.discovery_timer.cancel()
                 self.print_failure_message()
+
             return
 
+        self.get_logger().info("📡 LaserScan topic discovered")
+        self.get_logger().info("--------------------------------------------------")
+
         scan_topic = None
+
+        # Check preferred list for laser topic
         for preferred in PREFERRED_SCAN_TOPICS:
+
             if preferred in laser_topics:
                 scan_topic = preferred
                 break
 
+        # If no preferred topic is found
         if scan_topic is None:
-            scan_topic = laser_topics[0]
-            print("--------------------------------------------------")
-            self.get_logger().info(f"{YELLOW}⚠️ Using non-standard LaserScan topic: {scan_topic}{NC}")
-            print("--------------------------------------------------")
+
+            scan_topic = laser_topics[0]  # simply select the first laserscan topic from the list of topics
+
+            self.get_logger().warn(f" Using non-standard LaserScan topic: {scan_topic}")
+
+            self.get_logger().info("--------------------------------------------------")
+
+        self.subscription = self.create_subscription(LaserScan,scan_topic,self.laserscan_callback,
+            QoSProfile(depth=10,reliability=ReliabilityPolicy.RELIABLE))
 
         self.get_logger().info(f"✅ Subscribing to LaserScan topic: {scan_topic}")
-        print("------------------------------------------------------------------")
-        self.get_logger().info("📡 LaserScan data received")
 
-        self.subscription = self.create_subscription(
-            LaserScan,
-            scan_topic,
-            self.laserscan_callback,
-            QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
-        )
+        self.get_logger().info("--------------------------------------------------")
 
-        print("------------------------------------------------------------------")
         self.discovery_timer.cancel()
 
-    # --------------------------------------------------
-    # LaserScan callback (time-throttled)
-    # --------------------------------------------------
-    def laserscan_callback(self, msg):
-        now = time.time()
-        if now - self.last_print_time < self.print_period:
-            return
-        self.last_print_time = now
+    # Failure Handling
 
-        # Cache scan metadata
+    def print_failure_message(self):
+
+        self.get_logger().info("❌ No LaserScan topic found.\n")
+
+        self.get_logger().info("Checked preferred topic names:")
+
+        for topic in PREFERRED_SCAN_TOPICS:
+            self.get_logger().info(f" - {topic}")
+
+        self.get_logger().info("\nWhat you can do:")
+        self.get_logger().info("  1. Run: ros2 topic list")
+        self.get_logger().info("  2. Identify the LaserScan topic")
+        self.get_logger().info("  3. Add the topic to PREFERRED_SCAN_TOPICS")
+
+        self.get_logger().info("\nNode will remain active. Press Ctrl+C to exit.")
+
+    def laserscan_callback(self,msg):
+
+        # Store LaserScan data for processing ...
+        self.scan_ranges = msg.ranges
         self.scan_angle_min = msg.angle_min
         self.scan_angle_max = msg.angle_max
         self.scan_angle_increment = msg.angle_increment
         self.scan_range_min = msg.range_min
         self.scan_range_max = msg.range_max
-        self.scan_ranges = msg.ranges
         self.number_of_ranges = len(msg.ranges)
 
-        if self.debug_mode == "sector":
-            self.debug_sectors()
-        else:
-            self.print_cardinal_distances()
+        self.scan_data_ready = True
 
-        self.get_logger().info("--------------------------------------------------")
-
-    # --------------------------------------------------
-    # Approach 1: Sector-based debugging
-    # --------------------------------------------------
     def detect_obstacles_by_sector(self):
+
+        """
+        Detect minimum obstacle distance in each predefined angular sector.
+
+        Returns:
+            dict: sector_name -> min distance (float) or None
+        """
+
+        # Define sector angles in radians, this will be dynamic based on the robot's laser scanner configuration., you have to check the FOV using sector_utils.py
+        # Using angles instead of indices for better adaptability. 
+       
+        SECTORS = {
+
+            "Front":       (-0.35, 0.35),     # ~ -20° to +20°      # Feel free to change limits of sectors as per your requirement. 
+            #"Front Left":  (0.35, 1.05),      # ~ 20° to 60°       # You can also add or remove sectors as per your requirement 
+            "Left":        (1.22, 1.92),      # ~ 70° to 110°
+            "Rear":        (2.97, 3.31),      # ~ 170° to 190°
+            "Right":       (4.36, 5.06),      # ~ 250° to 290°
+            #"Front Right": (5.23, 5.93),      # ~ 300° to 340°                                                            
+            
+        }      
+
         sector_distances = {}
 
-        for name, (angle_start, angle_end) in self.sectors.items():
-            start_idx = get_index_from_angle(
-                angle_start,
-                self.scan_angle_min,
-                self.scan_angle_max,
-                self.scan_angle_increment,
-                self.number_of_ranges
-            )
-            end_idx = get_index_from_angle(
-                angle_end,
-                self.scan_angle_min,
-                self.scan_angle_max,
-                self.scan_angle_increment,
-                self.number_of_ranges
-            )
+        # for each sector-one at a time(whole for loop for each dictionary key-word pair), get the respective min and max indices ...
+        for sector_name, (angle_start, angle_end) in SECTORS.items():
+            start_idx = get_index_from_angle(angle_start, self.scan_angle_min, self.scan_angle_max, self.scan_angle_increment, self.number_of_ranges)
+            end_idx = get_index_from_angle(angle_end, self.scan_angle_min, self.scan_angle_max, self.scan_angle_increment, self.number_of_ranges)
 
             if start_idx is None or end_idx is None:
-                sector_distances[name] = None
+                sector_distances[sector_name] = None
                 continue
+                   
+            
+            if start_idx < self.number_of_ranges and end_idx < self.number_of_ranges:
+                # ✅ Correct wrap-aware slicing
+                if start_idx <= end_idx:
+                    # Normal case (no wrap)
+                    sector_ranges = self.scan_ranges[start_idx:end_idx + 1]
+                else:
+                    sector_ranges = (
+                        self.scan_ranges[start_idx:] +
+                        self.scan_ranges[:end_idx + 1]
+                    )
 
-            if start_idx <= end_idx:
-                sector_ranges = self.scan_ranges[start_idx:end_idx + 1]
-            else:
-                sector_ranges = (
-                    self.scan_ranges[start_idx:] +
-                    self.scan_ranges[:end_idx + 1]
-                )
+                valid_ranges = [
+                    r for r in sector_ranges         # return r if r falls in between scan_range_min to scan_range max values.
+                    if self.scan_range_min <= r <= self.scan_range_max
+                ]
 
-            valid_ranges = [
-                r for r in sector_ranges
-                if self.scan_range_min <= r <= self.scan_range_max
-            ]
-
-            if valid_ranges:
-                sector_distances[name] = min(valid_ranges)
-            else:
-                sector_distances[name] = float('inf')
+                if valid_ranges:
+                    sector_distances[sector_name] = min(valid_ranges)
+                else:
+                    print(f"{RED}Can't find any Obstacles, within the LIDAR range{NC}")
+                    sector_distances[sector_name] = float('inf')
 
         return sector_distances
+    
+    def print_sector_distances(self):
 
-    def debug_sectors(self):
-        self.get_logger().info("📊 Sector-wise minimum distances:")
+        if not self.scan_data_ready:  # Start printing only when laserscan data is ready
+            return                     # do not proceed further until laserscan data is ready
+
+        self.get_logger().info("📊 Sector-wise minimum obstacle distances:")
+        self.get_logger().info("--------------------------------------------------")
 
         sector_distances = self.detect_obstacles_by_sector()
+
         for sector, distance in sector_distances.items():
+
             if distance is None:
-                self.get_logger().warn(
-                    f"{RED}{sector}: Outside LiDAR FOV{NC}"
-                )
+
+                self.get_logger().warn(f"{RED}{sector}: Outside LiDAR FOV{NC}")
+
             elif math.isinf(distance):
-                self.get_logger().info(
-                    f"{YELLOW}{sector}: CLEAR (no obstacle within range){NC}"
-                )
+
+                self.get_logger().info(f"{YELLOW}{sector}: CLEAR{NC}")
+
             else:
-                self.get_logger().info(
-                    f"{GREEN}{sector}: {distance:.2f} m{NC}"
-                )
 
-    # --------------------------------------------------
-    # Approach 2: Cardinal probing
-    # --------------------------------------------------
-    def get_distance_at_angle(self, angle_rad):
-        idx = get_index_from_angle(
-            angle_rad,
-            self.scan_angle_min,
-            self.scan_angle_max,
-            self.scan_angle_increment,
-            self.number_of_ranges
-        )
-
-        if idx is None:
-            return None
-
-        dist = self.scan_ranges[idx]
-        if not (self.scan_range_min <= dist <= self.scan_range_max):
-            return float('inf')
-
-        return dist
-
-    def print_cardinal_distances(self):
-        angles = {
-            "FRONT": 0.0,
-            "LEFT": math.pi / 2,
-            "BACK": math.pi,
-            "RIGHT": -math.pi / 2,
-            "OTHER": math.radians(-125),
-        }
-
-        for name, angle in angles.items():
-            dist = self.get_distance_at_angle(angle)
-
-            if dist is None:
-                self.get_logger().warn(
-                    f"{RED}{name}: Outside LiDAR FOV — check mounting{NC}")
-            elif math.isinf(dist):
-                self.get_logger().info(f"{YELLOW}{name}: No obstacle detected within range{NC}")
-            else:
-                self.get_logger().info(f"{GREEN}{name}: Obstacle at {dist:.2f} m{NC}")
-
-    # --------------------------------------------------
-    # Failure handling
-    # --------------------------------------------------
-    def print_failure_message(self):
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print("❌ No LaserScan topic found.\n")
-        print("Checked preferred topic names:")
-        for t in PREFERRED_SCAN_TOPICS:
-            print(f" - {t}")
-
-        print("\nWhat you can do:")
-        print("  1. Run: ros2 topic list")
-        print("  2. Find the LaserScan topic (type: sensor_msgs/msg/LaserScan)")
-        print("  3. Add it to PREFERRED_SCAN_TOPICS in laser_inspector.py\n")
-        print("Node will remain running. Press Ctrl+C to exit.")
-
-
+                self.get_logger().info(f"{GREEN}{sector}: {distance:.2f} m{NC}")        
+                
+        
 def main(args=None):
-    debug_mode, print_period = get_startup_config(timeout=10)
+
     rclpy.init(args=args)
-    node = SectorDebuggerNode(debug_mode=debug_mode, print_period=print_period)
+    node = SectorDebuggerNode()
+
     try:
         rclpy.spin(node)
+
     except KeyboardInterrupt:
-        print(f"\n{RED}Shutting down Sector Debugger Node...{NC}")
+        print(f"\n{RED} Shutting down Sector Debugger Node...{NC}")
+
     finally:
         node.destroy_node()
 
+        if rclpy.ok():
+            rclpy.shutdown()
+
 if __name__ == '__main__':
     main()
+    

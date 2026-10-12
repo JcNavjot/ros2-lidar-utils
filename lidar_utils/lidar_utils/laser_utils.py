@@ -5,18 +5,16 @@ def get_index_from_angle(angle_rad, scan_angle_min, scan_angle_max, scan_angle_i
     """
     Convert an angle (rad) to a LaserScan index.
 
-    This implementation is intentionally SIMPLE and CORRECT.
     It works for:
       - [0, 2π] scans
       - [-π, +π] scans
       - partial FOV scans
 
-    Assumption (guaranteed by ROS):
-      index i corresponds to angle:
-        angle = scan_angle_min + i * scan_angle_increment
+    # Convert an angle (rad) to a LaserScan index.
+    # index i corresponds to angle: angle = scan_angle_min + i * scan_angle_increment
     """
 
-    # “If the LiDAR scan uses a 0 → 2π coordinate system, but I supplied a negative angle, reinterpret that angle in the same coordinate frame.”
+    # “If the LiDAR scan uses a 0, 2π coordinate system, but I supplied a negative angle, reinterpret that angle in the same coordinate frame.”
     if scan_angle_min >= 0:
         # scan is [0, 2π]
         if angle_rad < 0:

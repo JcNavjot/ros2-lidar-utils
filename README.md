@@ -1,57 +1,294 @@
-## # ROS2 LiDAR Utilities — LaserScan Debugging & Inspection Tools
+# ROS2 LiDAR Utilities — LaserScan Debugging & Inspection Toolkit
 
-A collection of ROS2 utilities and debugging tools for working with
-`sensor_msgs/LaserScan` data on real robots and simulations.
+A lightweight yet powerful ROS2 toolkit for inspecting, understanding, and debugging `sensor_msgs/LaserScan` data on both **real robots** and **simulation environments**.
 
-## Overview
-This repository contains a ROS2 package focused on inspecting, interpreting,
-and debugging LiDAR `sensor_msgs/LaserScan` data in a human-readable and
-system-safe way during real robot integration.
+Designed for:
 
-## Why this package exists
+* Robotics engineers
+* ROS2 developers
+* Students learning perception
+* Navigation & autonomy debugging
+* LiDAR integration and validation
 
-During early robot integration, LiDAR issues are often not caused by
-algorithms but by incorrect assumptions about angle ranges, indexing,
-field-of-view, or frame alignment. These problems are difficult to
-understand when looking only at raw `LaserScan` messages.
+---
 
-This package was created to provide a safe and human-readable way to
-inspect LiDAR data before using it in navigation or control logic.
+# Why this package exists
 
-The goal is not to replace perception algorithms, but to help engineers
-understand *what the robot actually sees* and avoid silent configuration
-mistakes.
+During robot integration, many navigation failures are not caused by algorithms — they are caused by incorrect assumptions about:
 
-## Features
-- Robust LaserScan topic discovery
-- Angle-to-index conversion utilities
-- Sector-based obstacle inspection
-- Cardinal direction probing
-- Designed for real robots and Gazebo simulation
+* LiDAR angle conventions
+* scan indexing
+* field-of-view interpretation
+* coordinate alignment
+* obstacle probing logic
 
-## Package Structure
-- `lidar_utils/` — core ROS2 package
-  - `laser_inspector.py` — LaserScan inspection and metadata debugging
-  - `sector_debugger.py` — sector and cardinal-based obstacle probing
-  - `laser_utils.py` — angle/index conversion helpers
-  - `sector_utils.py` — sector design and generation helpers
-  - `angle_utils.py` — angle conversion utilities
- 
-## Example Usage Workflow
+Raw `LaserScan` messages are difficult to interpret directly.
 
-This package is typically used during system bring-up or debugging:
+This toolkit was created to provide a **human-readable debugging layer** between raw sensor data and higher-level robotic behaviors.
 
-1. Launch a robot or simulation that publishes `sensor_msgs/LaserScan`or similar topic. Examples can be /scan, /laser_scan etc...
-2. Run `laser_inspector` to verify angle limits, ranges, and scan metadata. It's useful for understanding LIDAR data parameters.
-3. Use `sector_debugger` to probe obstacles in specific directions
-4. Integrate validated scan interpretation into higher-level behaviors
+The goal is simple:
 
-## Compatibility
-- ROS2 Humble
-- Python-based ROS2 nodes
+> Help developers understand what the robot actually sees before building autonomy on top of it.
 
-## Notes
-This package is part of my robotics systems work and is intended as a reusable
-debugging and perception support module.
+---
 
-For design reasoning and development history, see [EVOLUTION.md](EVOLUTION.md).
+# Universal Design Philosophy
+
+These utilities are intentionally designed to be hardware-agnostic.
+
+✔ Works on real robots and simulations
+✔ Supports different LiDAR brands and configurations
+✔ Supports different LiDAR FoVs
+✔ ROS2-native architecture
+✔ Automatically discovers LaserScan topics
+✔ Lightweight and easy to extend
+
+No robot-specific assumptions are hardcoded.
+
+---
+
+# Important Notes Before Using
+
+This repository is designed as a complete LiDAR debugging toolkit.
+
+Please clone/download the full repository.
+
+Some scripts rely on shared utility modules inside the package.
+
+For example:
+
+* `laser_inspector.py`
+* `sector_debugger.py`
+
+both depend on:
+
+* `laser_utils.py`
+* `angle_utils.py`
+
+Running scripts individually outside the package may result in import errors.
+
+---
+
+# Features
+
+* LaserScan topic auto-discovery
+* LiDAR geometry inspection
+* Angle-to-index conversion helpers
+* Sector-based obstacle debugging
+* Configurable obstacle sectors
+* ROS2 launch file support
+* Parameterized runtime configuration
+* Real-time obstacle monitoring
+* Beginner-friendly output formatting
+* Works in Gazebo and real hardware
+
+---
+
+# Toolkit Overview
+
+## 1. Laser Inspector
+
+A LiDAR geometry inspection utility.
+
+This tool helps developers understand:
+
+* FoV (Field of View)
+* angle increment
+* scan indexing
+* directional indices
+* scan ranges
+* LiDAR geometry conventions
+
+This is typically the FIRST tool to run when integrating a new LiDAR.
+
+---
+
+### Example Output
+
+![Laser Inspector Output](assets/laser_inspector_output.png)
+
+---
+
+## 2. Sector Debugger
+
+A real-time obstacle inspection utility.
+
+This tool continuously computes the minimum obstacle distance inside predefined angular sectors.
+
+Useful for:
+
+* obstacle avoidance debugging
+* navigation tuning
+* behavior-tree debugging
+* wall-following logic
+* autonomous robot bring-up
+
+---
+
+### Example Output
+
+![Sector Debugger Output](assets/sector_debugger_output.png)
+
+---
+
+# Sector Philosophy
+
+Unlike single-ray probing approaches, this debugger works using angular sectors.
+
+This is generally more robust because:
+
+* single rays can miss obstacles
+* sector minimums are safer
+* better for real-world robotics
+
+Example sectors:
+
+* Front
+* Front-Left
+* Front-Right
+* Left
+* Right
+* Rear
+
+Users can modify sector definitions directly inside the script depending on their robot and application.
+
+---
+
+# Repository Structure
+
+```text
+ros2-lidar-utils/
+├── assets/
+├── lidar_utils/
+│   ├── laser_inspector.py
+│   ├── sector_debugger.py
+│   ├── laser_utils.py
+│   ├── angle_utils.py
+│   └── sector_utils.py
+├── launch/
+├── README.md
+└── EVOLUTION.md
+```
+
+---
+
+# Quick Start
+
+## Build the package
+
+```bash
+colcon build --packages-select lidar_utils
+source install/setup.bash
+```
+
+---
+
+# Running the Tools
+
+## Laser Inspector
+
+```bash
+ros2 run lidar_utils laser_inspector
+```
+
+or
+
+```bash
+ros2 launch lidar_utils laser_inspector.launch.py
+```
+
+---
+
+## Sector Debugger
+
+```bash
+ros2 run lidar_utils sector_debugger
+```
+
+or
+
+```bash
+ros2 launch lidar_utils sector_debugger.launch.py
+```
+
+---
+
+# ROS2 Parameters
+
+The sector debugger supports ROS2 parameters.
+
+Example:
+
+```bash
+ros2 launch lidar_utils sector_debugger.launch.py print_interval:=0.2
+```
+
+or:
+
+```bash
+ros2 run lidar_utils sector_debugger --ros-args -p print_interval:=0.2
+```
+
+---
+
+# Parameter Reference
+
+| Parameter        | Description                   | Default |
+| ---------------- | ----------------------------- | ------- |
+| `print_interval` | Time between obstacle updates | `1.0`   |
+
+---
+
+# Typical Workflow
+
+1. Launch robot or simulation
+2. Verify LaserScan topic availability
+3. Run `laser_inspector`
+4. Understand scan geometry
+5. Run `sector_debugger`
+6. Tune navigation or obstacle logic
+7. Integrate into higher-level autonomy
+
+---
+
+# Compatibility
+
+* ROS2 Humble
+* Python ROS2 nodes
+* Gazebo simulation
+* Real robots
+
+---
+
+# Future Improvements
+
+Planned future additions include:
+
+* RViz visualization tools
+* Dynamic sector configuration
+* Visual debugging overlays
+* Occupancy visualization helpers
+* Advanced LiDAR analysis utilities
+
+---
+
+# Contributions & Feedback
+
+Suggestions, improvements, and discussions are always welcome.
+
+If you build something using this toolkit or improve it further, feel free to reach out or contribute.
+
+---
+
+# Development Notes
+
+This repository is part of my robotics systems engineering work focused on:
+
+* perception tooling
+* ROS2 debugging infrastructure
+* navigation support systems
+* developer tooling for robotics
+
+For design reasoning and package evolution history, see:
+
+👉 `EVOLUTION.md`
